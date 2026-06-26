@@ -207,18 +207,81 @@
     const other = s => (s === 'A' ? 'B' : 'A');
     const getLang = s => document.getElementById(SIDE[s].lang).value;
 
-    function apiCode(l)  { return l === 'yue' ? 'zh' : l; }                 // 粵語走中文介接
+    // 翻譯用語言代碼：粵語輸出繁體中文(香港適用)、普通話用簡體中文
+    function apiCode(l)  { return ({yue:'zh-TW', zh:'zh-CN', vi:'vi', en:'en'})[l] || l; }
     function langName(l) { return ({yue:'粵語', zh:'普通話', vi:'越南文', en:'英文'})[l] || l; }
     function recogLang(l){ return ({yue:'yue-Hant-HK', zh:'zh-CN', vi:'vi-VN', en:'en-US'})[l] || 'en-US'; }
 
     const live = document.getElementById('liveIndicator');
     const chatStream = document.getElementById('chatStream');
 
+    // ============================================================
+    //  ★★★ 翻譯引擎設定 ★★★
+    //  填哪一個金鑰就用哪一個；兩個都留空則用「免費備援」。
+    //
+    //  ① Gemini 免費層（推薦，免信用卡，粵語最準）
+    //     到 https://aistudio.google.com 申請 → 貼在下面：
+    const GEMINI_API_KEY = 'AQ.Ab8RN6LOlGD7IviCx79asozBEGTVWWhl_PtiqzsBOtqH_39tZA';
+    const GEMINI_MODEL   = 'gemini-2.5-flash';   // 免費層可用的型號
+    //
+    //  ② Google Cloud Translation 官方（需開通帳單）
+    const GOOGLE_API_KEY = '';
+    // ============================================================
+
+    // LLM 提示用的語言描述（關鍵：叫它聽懂並輸出「自然粵語」）
+    function srcDesc(l){ return ({yue:'香港廣東話口語（繁體中文）', zh:'普通話中文', vi:'越南文', en:'英文'})[l] || l; }
+    function tgtDesc(l){ return ({yue:'自然的香港廣東話口語（繁體中文書寫）', zh:'簡體中文（普通話）', vi:'越南文', en:'英文'})[l] || l; }
+
     // ===== 翻譯（單向，只譯一次）=====
     async function translate(text, from, to) {
         if (!text.trim()) return '';
         const sl = apiCode(from), tl = apiCode(to);
         if (sl === tl) return text;                                        // 同語言不必翻
+        if (GEMINI_API_KEY) return await translateGemini(text, from, to);  // 優先：Gemini LLM
+        if (GOOGLE_API_KEY) return await translateGoogle(text, sl, tl);    // 次之：官方 NMT
+        return await translateFree(text, sl, tl);                          // 備援：免費端點
+    }
+
+    // ① Gemini 免費 LLM（最自然，懂粵語口語）；失敗時自動退回免費端點
+    async function translateGemini(text, from, to) {
+        try {
+            const prompt = `你是專業即時口譯員。把以下訊息從「${srcDesc(from)}」翻譯成「${tgtDesc(to)}」。`
+                + `只輸出翻譯結果本身，不要加引號、不要解釋、不要附原文。\n\n訊息：${text}`;
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
+            const res = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    contents: [{ parts: [{ text: prompt }] }],
+                    generationConfig: { temperature: 0.2 }
+                })
+            });
+            const data = await res.json();
+            const out = data && data.candidates && data.candidates[0]
+                && data.candidates[0].content && data.candidates[0].content.parts
+                && data.candidates[0].content.parts[0] && data.candidates[0].content.parts[0].text;
+            if (out) return out.trim();
+            return await translateFree(text, apiCode(from), apiCode(to));   // Gemini 無回應 → 退回免費
+        } catch (e) {
+            return await translateFree(text, apiCode(from), apiCode(to));   // Gemini 失敗 → 退回免費
+        }
+    }
+
+    // ② 官方 Google Cloud Translation（NMT）
+    async function translateGoogle(text, sl, tl) {
+        try {
+            const url = `https://translation.googleapis.com/language/translate/v2`
+                + `?key=${GOOGLE_API_KEY}&q=${encodeURIComponent(text)}&source=${sl}&target=${tl}&format=text`;
+            const res = await fetch(url);
+            const data = await res.json();
+            if (data && data.data && data.data.translations) return data.data.translations[0].translatedText;
+            const msg = (data && data.error && data.error.message) ? data.error.message : '請檢查金鑰設定';
+            return '[官方API：' + msg + ']';
+        } catch (e) { return '[官方API連線失敗，請檢查網路或金鑰]'; }
+    }
+
+    // ③ 免費備援端點
+    async function translateFree(text, sl, tl) {
         try {
             const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${sl}&tl=${tl}&dt=t&q=${encodeURIComponent(text)}`;
             const res = await fetch(url);
