@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.5, user-scalable=yes">
+    <title>🌐 Kingwood 雙人即時溝通翻譯台</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, -apple-system, sans-serif; }
+        html, body { height: 100%; }
+        body {
+            background: linear-gradient(145deg, #f0f4f8 0%, #d9e2ec 100%);
+            height: 100vh;            /* 鎖死為單一視窗，禁止整頁捲動 */
+            overflow: hidden;
+            padding: 12px;
+            display: flex;
+            justify-content: center;
+        }
+
+        /* 三欄主佈局：左輸入 / 中央聊天室 / 右輸入 */
+        .app {
+            width: 100%;
+            max-width: 1700px;
+            height: 100%;
+            display: flex;
+            gap: 12px;
+            align-items: stretch;
+        }
+
+        .card {
+            background: rgba(255, 255, 255, 0.96);
+            backdrop-filter: blur(10px);
+            border-radius: 18px;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.06);
+            padding: 16px;
+            border: 1px solid #fff;
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+            overflow: hidden;
+        }
+
+        /* 兩側輸入欄：寬度鎖定，不隨螢幕變形 */
+        .side-panel {
+            flex: 0 0 clamp(240px, 23%, 360px);
+            min-height: 0;
+        }
+        .side-A { border-top: 5px solid #2a6f97; }
+        .side-B { border-top: 5px solid #bb3e03; }
+
+        /* 中央聊天室：吸收所有剩餘寬度 */
+        .chat-panel {
+            flex: 1 1 0%;
+            min-width: 0;
+            min-height: 0;
+        }
+
+        .panel-title {
+            display: flex; align-items: center; gap: 8px; justify-content: space-between;
+            font-size: 1.05rem; font-weight: 700; color: #102a43;
+            border-bottom: 2px solid #334e68; padding-bottom: 10px; margin-bottom: 12px; flex-shrink: 0;
+        }
+        .panel-title .who { display: flex; align-items: center; gap: 6px; }
+        .dot { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
+        .dot-A { background: #2a6f97; } .dot-B { background: #bb3e03; }
+
+        select {
+            padding: 7px 8px; border-radius: 8px; border: 1px solid #ccc; background: white;
+            font-size: 0.95rem; width: 100%; margin-bottom: 10px; flex-shrink: 0;
+        }
+
+        /* 輸入框：grow:0，高度鎖死，完全退出 flex 空間再分配，跨引擎都不會被撐大 */
+        textarea.input-box {
+            width: 100%;
+            flex: 0 0 clamp(90px, 16vh, 200px);
+            height: clamp(90px, 16vh, 200px);
+            min-height: 0;
+            padding: 12px; border: 2px solid #bcccdc; border-radius: 12px;
+            font-size: 1.05rem; line-height: 1.5; resize: none; overflow-y: auto; margin-bottom: 10px;
+        }
+        textarea.input-box:focus { outline: none; border-color: #2a6f97; }
+
+        .btn-row { display: flex; gap: 8px; flex-wrap: wrap; flex-shrink: 0; }
+        .btn {
+            padding: 11px 14px; border-radius: 10px; border: none; cursor: pointer;
+            font-weight: 600; transition: all 0.15s; display: flex; align-items: center; justify-content: center;
+            gap: 5px; font-size: 0.95rem;
+        }
+        .btn:active { transform: scale(0.97); }
+        .btn-mic { flex: 1 1 100%; background: #2a9d8f; color: white; font-size: 1.05rem; padding: 14px; }
+        .btn-mic:hover { background: #21867a; }
+        .btn-mic.listening { background: #e63946; animation: pulse 1.4s infinite; }
+        @keyframes pulse { 0%{opacity:1} 50%{opacity:.62} 100%{opacity:1} }
+        .btn-send { flex: 1 1 auto; background: #102a43; color: white; }
+        .btn-send:hover { background: #243b53; }
+        .btn-clear { flex: 0 0 auto; background: #f0f4f8; color: #486581; }
+        .btn-disabled { background: #e2e8f0 !important; color: #94a3b8 !important; cursor: not-allowed; animation: none !important; }
+
+        .side-status { margin-top: 10px; font-size: 0.82rem; color: #627d98; min-height: 18px; flex-shrink: 0; }
+
+        /* ---- 中央聊天室 ---- */
+        .chat-tools { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+        .chat-tools .btn { padding: 8px 12px; font-size: 0.85rem; }
+        .btn-export { background: #2a9d8f; color: white; }
+        .btn-export:hover { background: #21867a; }
+        .btn-clearall { background: #fee2e2; color: #b91c1c; }
+
+        .live-indicator { text-align: center; font-size: 0.85rem; color: #486581; font-weight: 600; margin-bottom: 8px; min-height: 20px; flex-shrink: 0; }
+
+        .chat-stream {
+            flex: 1 1 0%; min-height: 0; overflow-y: auto; padding: 6px 8px;
+            display: flex; flex-direction: column; gap: 12px;
+        }
+        .chat-stream::-webkit-scrollbar { width: 7px; }
+        .chat-stream::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+
+        .msg { display: flex; flex-direction: column; max-width: 78%; }
+        .msg-A { align-self: flex-start; align-items: flex-start; }
+        .msg-B { align-self: flex-end; align-items: flex-end; }
+        .bubble { padding: 10px 14px; border-radius: 14px; line-height: 1.45; word-break: break-word; }
+        .msg-A .bubble { background: #e7f0f7; border: 1px solid #cfe0ec; border-bottom-left-radius: 4px; }
+        .msg-B .bubble { background: #fdeae0; border: 1px solid #f5d2bf; border-bottom-right-radius: 4px; }
+        .b-orig { color: #486581; font-size: 0.92rem; }
+        .b-trans { color: #102a43; font-size: 1.18rem; font-weight: 600; margin-top: 6px; padding-top: 6px; border-top: 1px dashed rgba(0,0,0,0.12); }
+        .b-trans.pending { color: #94a3b8; font-weight: 500; font-size: 1rem; }
+        .b-meta { font-size: 0.72rem; color: #94a3b8; margin-top: 4px; display: flex; gap: 8px; align-items: center; }
+        .chat-empty { margin: auto; text-align: center; color: #94a3b8; font-size: 0.95rem; }
+
+        /* RWD：窄螢幕改上下排列並允許捲動 */
+        @media (max-width: 980px) {
+            body { height: auto; min-height: 100vh; overflow: auto; }
+            .app { flex-direction: column; height: auto; }
+            .card { overflow: visible; }
+            .side-panel { flex: none; width: 100%; }
+            .chat-panel { flex: none; }
+            .chat-stream { min-height: 320px; }
+            textarea.input-box { flex: none; height: 90px; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="app">
+
+    <!-- ===== 左：甲方輸入 ===== -->
+    <div class="card side-panel side-A">
+        <div class="panel-title">
+            <span class="who"><span class="dot dot-A"></span>甲方</span>
+        </div>
+        <select id="langA">
+            <option value="yue">粵語 (廣東話)</option>
+            <option value="zh">普通話 (中文)</option>
+            <option value="vi">Tiếng Việt (越南語)</option>
+            <option value="en">English (英文)</option>
+        </select>
+        <textarea class="input-box" id="inputA" placeholder="甲方在此打字，或按下方按鈕語音發言…"></textarea>
+        <div class="btn-row">
+            <button class="btn btn-mic" id="micA">🎤 開始發言</button>
+            <button class="btn btn-send" id="sendA">📤 送出</button>
+            <button class="btn btn-clear" id="clearA">🧹</button>
+        </div>
+        <div class="side-status" id="statusA"></div>
+    </div>
+
+    <!-- ===== 中：聊天室 + 記錄 + 匯出 ===== -->
+    <div class="card chat-panel">
+        <div class="panel-title">
+            <span>💬 即時對話</span>
+            <div class="chat-tools">
+                <button class="btn btn-export" id="exportBtn">📥 匯出記錄</button>
+                <button class="btn btn-clearall" id="clearAllBtn">🗑️ 清空</button>
+            </div>
+        </div>
+        <div class="live-indicator" id="liveIndicator">⚡ 系統就緒 · 請任一方按「開始發言」</div>
+        <div class="chat-stream" id="chatStream">
+            <div class="chat-empty">📭 尚無對話<br><small>打字送出或語音發言後，雙方訊息會即時顯示在這裡</small></div>
+        </div>
+    </div>
+
+    <!-- ===== 右：乙方輸入 ===== -->
+    <div class="card side-panel side-B">
+        <div class="panel-title">
+            <span class="who"><span class="dot dot-B"></span>乙方</span>
+        </div>
+        <select id="langB">
+            <option value="yue">粵語 (廣東話)</option>
+            <option value="zh">普通話 (中文)</option>
+            <option value="vi" selected>Tiếng Việt (越南語)</option>
+            <option value="en">English (英文)</option>
+        </select>
+        <textarea class="input-box" id="inputB" placeholder="乙方在此打字，或按下方按鈕語音發言…"></textarea>
+        <div class="btn-row">
+            <button class="btn btn-mic" id="micB">🎤 開始發言</button>
+            <button class="btn btn-send" id="sendB">📤 送出</button>
+            <button class="btn btn-clear" id="clearB">🧹</button>
+        </div>
+        <div class="side-status" id="statusB"></div>
+    </div>
+
+</div>
+
+<script>
+    // ===== 設定 =====
+    const SIDE = {
+        A: { name: '甲方', lang: 'langA', ta: 'inputA', mic: 'micA', send: 'sendA', clear: 'clearA', status: 'statusA' },
+        B: { name: '乙方', lang: 'langB', ta: 'inputB', mic: 'micB', send: 'sendB', clear: 'clearB', status: 'statusB' },
+    };
+    const other = s => (s === 'A' ? 'B' : 'A');
+    const getLang = s => document.getElementById(SIDE[s].lang).value;
+
+    function apiCode(l)  { return l === 'yue' ? 'zh' : l; }                 // 粵語走中文介接
+    function langName(l) { return ({yue:'粵語', zh:'普通話', vi:'越南文', en:'英文'})[l] || l; }
+    function recogLang(l){ return ({yue:'yue-Hant-HK', zh:'zh-CN', vi:'vi-VN', en:'en-US'})[l] || 'en-US'; }
+
+    const live = document.getElementById('liveIndicator');
+    const chatStream = document.getElementById('chatStream');
+
+    // ===== 翻譯（單向，只譯一次）=====
+    async function translate(text, from, to) {
+        if (!text.trim()) return '';
+        const sl = apiCode(from), tl = apiCode(to);
+        if (sl === tl) return text;                                        // 同語言不必翻
+        try {
+            const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${sl}&tl=${tl}&dt=t&q=${encodeURIComponent(text)}`;
+            const res = await fetch(url);
+            const data = await res.json();
+            return data[0].map(item => item[0]).join('');
+        } catch (e) { return '[翻譯失敗，請檢查網路連線]'; }
+    }
+
+    // ===== 訊息與聊天室 =====
+    let messages = [];
+
+    function escapeHtml(s) {
+        return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+
+    async function postMessage(side, text) {
+        text = text.trim();
+        if (!text) return;
+        const from = getLang(side), to = getLang(other(side));
+        const item = {
+            id: Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+            side, original: text, translated: '⏳ 翻譯中…', from, to,
+            time: new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'}),
+            pending: true
+        };
+        messages.push(item);
+        renderChat();
+
+        const t = await translate(text, from, to);
+        item.translated = t;
+        item.pending = false;
+        renderChat();
+    }
+
+    function renderChat() {
+        if (messages.length === 0) {
+            chatStream.innerHTML = '<div class="chat-empty">📭 尚無對話<br><small>打字送出或語音發言後，雙方訊息會即時顯示在這裡</small></div>';
+            return;
+        }
+        chatStream.innerHTML = messages.map(m => `
+            <div class="msg msg-${m.side}">
+                <div class="bubble">
+                    <div class="b-orig">${escapeHtml(m.original)}</div>
+                    <div class="b-trans ${m.pending ? 'pending' : ''}">${escapeHtml(m.translated)}</div>
+                    <div class="b-meta">
+                        <span>${SIDE[m.side].name} · ${m.time}</span>
+                        <span>${langName(m.from)} → ${langName(m.to)}</span>
+                    </div>
+                </div>
+            </div>`).join('');
+        chatStream.scrollTop = chatStream.scrollHeight;     // 永遠捲到最新（聊天室行為）
+    }
+
+    // ===== TTS 朗讀功能已移除（不需要朗讀譯文）=====
+
+    // ===== 語音辨識：單一工作階段，輪流發言 + 暫停 =====
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    let recognition = null;
+    let micSide = null;       // 目前持咪的一方
+    let pendingSide = null;   // 等待切換語言後啟動的一方
+
+    function setStatus(side, txt) { document.getElementById(SIDE[side].status).textContent = txt; }
+
+    function updateMicUI() {
+        ['A','B'].forEach(s => {
+            const btn = document.getElementById(SIDE[s].mic);
+            if (micSide === s) { btn.textContent = '⏸ 暫停 (發言中)'; btn.classList.add('listening'); }
+            else { btn.textContent = '🎤 開始發言'; btn.classList.remove('listening'); }
+        });
+        if (micSide) live.textContent = `🎙️ ${SIDE[micSide].name} 發言中… (按對面「開始發言」即可換邊)`;
+        else live.textContent = '⚡ 待命中 · 請任一方按「開始發言」';
+    }
+
+    function launchPending() {
+        if (pendingSide == null) return;
+        const side = pendingSide; pendingSide = null;
+        micSide = side;
+        recognition.lang = recogLang(getLang(side));
+        try { recognition.start(); }
+        catch (e) { setTimeout(() => { try { recognition.start(); } catch(_){} }, 150); }
+        updateMicUI();
+    }
+
+    // 把某一方輸入框中尚未定稿的辨識文字「自動送出」（停止收音時呼叫）
+    function flushSide(s) {
+        if (!s) return;
+        const ta = document.getElementById(SIDE[s].ta);
+        const v = (ta.value || '').trim();
+        if (v) postMessage(s, v);
+        ta.value = '';
+    }
+
+    function startMicReal(side) {
+        if (!SR) { setStatus(side, '⚠️ 此瀏覽器不支援語音輸入，請改用打字或 Chrome/Edge'); return; }
+        if (micSide === side) { pauseMic(); return; }
+        pendingSide = side;
+        if (micSide) {                                             // 對面正在收音：先自動送出殘留→停→onend 後啟動本方
+            const prev = micSide; micSide = null; updateMicUI();
+            flushSide(prev);
+            setStatus(prev, '⏸ 已暫停（已自動送出）');
+            try { recognition.stop(); } catch (e) { launchPending(); }
+        } else {
+            launchPending();
+        }
+        setStatus(side, '🎙️ 聆聽中，請說話…（停止時會自動送出）');
+    }
+
+    function pauseMic() {
+        const s = micSide;
+        micSide = null; pendingSide = null;
+        try { recognition.stop(); } catch (e) {}
+        flushSide(s);                                              // 收音停止 → 自動送出殘留文字（免按送出）
+        if (s) setStatus(s, '⏸ 已暫停（已自動送出，麥克風已釋放）');
+        updateMicUI();
+    }
+
+    if (SR) {
+        recognition = new SR();
+        recognition.continuous = true;
+        recognition.interimResults = true;
+
+        recognition.onresult = (e) => {
+            if (!micSide) return;
+            const ta = document.getElementById(SIDE[micSide].ta);
+            let interim = '';
+            for (let i = e.resultIndex; i < e.results.length; i++) {
+                const r = e.results[i];
+                if (r.isFinal) {
+                    postMessage(micSide, r[0].transcript);          // 每句獨立翻譯（快）
+                } else {
+                    interim += r[0].transcript;
+                }
+            }
+            ta.value = interim;                                     // 即時顯示辨識中的文字
+            if (!interim) ta.value = '';
+        };
+
+        recognition.onend = () => {
+            if (pendingSide != null) { launchPending(); return; }   // 換邊：啟動等待方
+            if (micSide) { try { recognition.start(); } catch (e) {} } // 連續模式：被瀏覽器中斷時自動續聽
+        };
+
+        recognition.onerror = (e) => {
+            if (micSide) setStatus(micSide, '⚠️ 辨識錯誤：' + (e.error || '') + '（請確認已允許麥克風）');
+        };
+    } else {
+        ['A','B'].forEach(s => { document.getElementById(SIDE[s].mic).classList.add('btn-disabled'); setStatus(s, '⚠️ 此瀏覽器不支援語音，請打字'); });
+    }
+
+    // ===== 事件綁定 =====
+    ['A','B'].forEach(s => {
+        document.getElementById(SIDE[s].mic).addEventListener('click', () => startMicReal(s));
+        document.getElementById(SIDE[s].send).addEventListener('click', () => {
+            const ta = document.getElementById(SIDE[s].ta);
+            postMessage(s, ta.value);
+            ta.value = '';
+        });
+        document.getElementById(SIDE[s].clear).addEventListener('click', () => {
+            document.getElementById(SIDE[s].ta).value = '';
+        });
+        // Enter 送出（Shift+Enter 換行）
+        document.getElementById(SIDE[s].ta).addEventListener('keydown', (ev) => {
+            if (ev.key === 'Enter' && !ev.shiftKey) {
+                ev.preventDefault();
+                const ta = ev.target;
+                postMessage(s, ta.value);
+                ta.value = '';
+            }
+        });
+    });
+
+    // 匯出
+    document.getElementById('exportBtn').addEventListener('click', () => {
+        if (messages.length === 0) { alert('目前沒有任何對話記錄可供匯出。'); return; }
+        const dateStr = new Date().toLocaleString();
+        let c = '==================================================\n';
+        c += '📝 KINGWOOD 雙向溝通翻譯記錄\n';
+        c += `📅 匯出時間: ${dateStr}\n`;
+        c += '==================================================\n\n';
+        messages.forEach((m, i) => {
+            c += `[${i + 1}] ${m.time} · ${SIDE[m.side].name}\n`;
+            c += `--------------------------------------------------\n`;
+            c += `🗣️ 原文 (${langName(m.from)})：\n${m.original}\n\n`;
+            c += `👉 譯文 (${langName(m.to)})：\n${m.translated}\n\n`;
+        });
+        c += '==================================================\n';
+        const blob = new Blob([c], { type: 'text/plain;charset=utf-8' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = `Kingwood_對話記錄_${new Date().toISOString().slice(0,10)}.txt`;
+        link.click();
+    });
+
+    // 清空全部
+    document.getElementById('clearAllBtn').addEventListener('click', () => {
+        if (messages.length && !confirm('確定清空全部對話記錄？（無法復原，建議先匯出）')) return;
+        messages = [];
+        renderChat();
+    });
+
+    updateMicUI();
+</script>
+</body>
+</html>
