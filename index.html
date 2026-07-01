@@ -221,7 +221,7 @@
     //
     //  ① Gemini 免費層（推薦，免信用卡，粵語最準）
     //     到 https://aistudio.google.com 申請 → 貼在下面：
-    const GEMINI_API_KEY = 'AQ.Ab8RN6LOlGD7IviCx79asozBEGTVWWhl_PtiqzsBOtqH_39tZA';
+    const GEMINI_API_KEY = '';
     const GEMINI_MODEL   = 'gemini-2.5-flash';   // 免費層可用的型號
     //
     //  ② Google Cloud Translation 官方（需開通帳單）
@@ -342,6 +342,19 @@
     let recognition = null;
     let micSide = null;       // 目前持咪的一方
     let pendingSide = null;   // 等待切換語言後啟動的一方
+    let micStream = null;     // 握住麥克風權限，避免每次重啟辨識時重複詢問
+
+    // 一次取得麥克風權限並「持續握住」，之後辨識重啟都不會再問
+    async function ensureMicPermission() {
+        if (micStream) return true;                                    // 已握住 → 直接放行
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return true; // 舊瀏覽器略過
+        try {
+            micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            return true;                                               // 不關閉這個 stream，讓權限一直保持
+        } catch (e) {
+            return false;                                              // 被拒絕
+        }
+    }
 
     function setStatus(side, txt) { document.getElementById(SIDE[side].status).textContent = txt; }
 
@@ -374,9 +387,11 @@
         ta.value = '';
     }
 
-    function startMicReal(side) {
+    async function startMicReal(side) {
         if (!SR) { setStatus(side, '⚠️ 此瀏覽器不支援語音輸入，請改用打字或 Chrome/Edge'); return; }
         if (micSide === side) { pauseMic(); return; }
+        const ok = await ensureMicPermission();                        // 只在第一次跳一次授權，之後不再問
+        if (!ok) { setStatus(side, '⚠️ 麥克風權限被拒，請按網址列的鎖頭圖示改成「允許」'); return; }
         pendingSide = side;
         if (micSide) {                                             // 對面正在收音：先自動送出殘留→停→onend 後啟動本方
             const prev = micSide; micSide = null; updateMicUI();
